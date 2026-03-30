@@ -105,7 +105,28 @@ function AuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (us
   );
 }
 
-function PremiumModal({ onClose }: { onClose: () => void }) {
+function PremiumModal({ onClose, user }: { onClose: () => void; user: User | null }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleUpgrade() {
+    if (!user) { onClose(); return; }
+    setLoading(true);
+    const res = await fetch(
+      "https://yvcpcihvqyzvafzincaz.supabase.co/functions/v1/create-checkout-session",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: user.id,
+          email: user.email,
+          return_url: window.location.href,
+        }),
+      }
+    );
+    const { url } = await res.json();
+    window.location.href = url;
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
       <div style={{ background: "#141822", border: "1.5px solid #e05c2a", borderRadius: 20, padding: "36px 32px", width: "100%", maxWidth: 440 }}>
@@ -132,8 +153,8 @@ function PremiumModal({ onClose }: { onClose: () => void }) {
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 32, color: "#e05c2a", fontWeight: 900 }}>£4.99<span style={{ fontSize: 16, color: "#555e7a" }}>/month</span></div>
           <div style={{ fontSize: 12, color: "#555e7a", marginTop: 4 }}>Cancel anytime. No commitment.</div>
         </div>
-        <button style={{ width: "100%", background: "#e05c2a", border: "none", borderRadius: 10, color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 700, padding: "14px 0", cursor: "pointer", marginBottom: 10 }}>
-          Start free trial → (coming soon)
+        <button onClick={handleUpgrade} disabled={loading} style={{ width: "100%", background: loading ? "#7a3015" : "#e05c2a", border: "none", borderRadius: 10, color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 700, padding: "14px 0", cursor: loading ? "not-allowed" : "pointer", marginBottom: 10 }}>
+          {loading ? "Redirecting..." : "Start free trial →"}
         </button>
         <button onClick={onClose} style={{ width: "100%", background: "transparent", border: "1.5px solid #252b3b", borderRadius: 10, color: "#555e7a", fontFamily: "'DM Mono', monospace", fontSize: 13, padding: "11px 0", cursor: "pointer" }}>Maybe later</button>
       </div>
@@ -249,16 +270,42 @@ export default function App() {
   const [sector, setSector] = useState("All");
   const [search, setSearch] = useState("");
   const [user, setUser] = useState<User | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showPremium, setShowPremium] = useState(false);
   const [savedIds, setSavedIds] = useState<string[]>([]);
 
+  async function checkPremium(userId: string) {
+    const { data } = await supabase
+      .from("subscriptions")
+      .select("status")
+      .eq("user_id", userId)
+      .single();
+    setIsPremium(data?.status === "active");
+  }
+
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { if (data.session?.user) setUser(data.session.user); });
-    supabase.auth.onAuthStateChange((_e, session) => { setUser(session?.user ?? null); });
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user) {
+        setUser(data.session.user);
+        checkPremium(data.session.user.id);
+      }
+    });
+    supabase.auth.onAuthStateChange((_e, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) checkPremium(session.user.id);
+    });
     fetchPosts();
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("success") === "true" && user) {
+      checkPremium(user.id);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [user]);
 
   async function fetchPosts() {
     setLoading(true);
@@ -289,6 +336,7 @@ export default function App() {
   async function handleSignOut() {
     await supabase.auth.signOut();
     setUser(null);
+    setIsPremium(false);
   }
 
   const filtered = posts.filter(p => {
@@ -310,7 +358,12 @@ export default function App() {
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             {user ? (
               <>
-                <button onClick={() => setShowPremium(true)} style={{ background: "linear-gradient(135deg, #e05c2a, #c9a12a)", border: "none", borderRadius: 10, color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, padding: "8px 14px", cursor: "pointer" }}>⚡ Premium</button>
+                {!isPremium && (
+                  <button onClick={() => setShowPremium(true)} style={{ background: "linear-gradient(135deg, #e05c2a, #c9a12a)", border: "none", borderRadius: 10, color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, padding: "8px 14px", cursor: "pointer" }}>⚡ Premium</button>
+                )}
+                {isPremium && (
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "#c9a12a", padding: "8px 14px" }}>⚡ Premium</span>
+                )}
                 <button onClick={handlePostClick} style={{ background: "#e05c2a", border: "none", borderRadius: 10, color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, padding: "9px 20px", cursor: "pointer" }}>+ I'm leaving</button>
                 <button onClick={handleSignOut} style={{ background: "transparent", border: "1.5px solid #252b3b", borderRadius: 10, color: "#555e7a", fontFamily: "'DM Mono', monospace", fontSize: 12, padding: "8px 14px", cursor: "pointer" }}>Sign out</button>
               </>
@@ -398,7 +451,7 @@ export default function App() {
 
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} onSuccess={(u) => setUser(u)} />}
       {showForm && user && <PostForm onPost={fetchPosts} onClose={() => setShowForm(false)} user={user} />}
-      {showPremium && <PremiumModal onClose={() => setShowPremium(false)} />}
+      {showPremium && <PremiumModal onClose={() => setShowPremium(false)} user={user} />}
     </div>
   );
 }
